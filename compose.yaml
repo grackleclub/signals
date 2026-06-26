@@ -1,0 +1,18 @@
+# otelcol-contrib for integration tests. Brought up by ./bin/test.
+#
+# The collector runs as the host user (UID/GID) so files it writes under
+# collector/out are readable by the test process without root.
+
+services:
+  collector:
+    image: ${COLLECTOR_IMAGE:-otel/opentelemetry-collector-contrib:0.155.0}
+    container_name: signals-collector
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    volumes:
+      - ./collector/config.yaml:/etc/otelcol-contrib/config.yaml:ro
+      - ./collector/out:/out
+    ports:
+      - "4318:4318" # OTLP/HTTP (what signals exports to)
+      - "4317:4317" # OTLP/gRPC
+      - "13133:13133" # health_check

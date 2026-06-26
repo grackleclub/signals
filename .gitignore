@@ -1,0 +1,8 @@
+# human + LLM planning scratch (see CLAUDE.md)
+plan.md
+
+# collector file-exporter output (integration harness)
+collector/out/
+
+# go
+*.out
