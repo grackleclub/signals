@@ -71,8 +71,14 @@ func TestIntegration_Signals(t *testing.T) {
 		t.Fatalf("shutdown (flush): %v", err)
 	}
 
-	// The collector writes asynchronously; poll the file until our run shows up.
-	dump := waitForDump(t, outPath, run, 15*time.Second)
+	// The collector writes asynchronously and per-signal; poll the file until
+	// all three signals for this run are present (or time out, then let the
+	// assertions below report exactly which is missing).
+	dump := waitForDump(t, outPath, 15*time.Second, func(d collectorDump) bool {
+		_, hasSpan := d.findSpan(service, spanName)
+		_, hasLog := d.findLog(service, logBody)
+		return hasSpan && hasLog && d.hasMetric(service, metricName)
+	})
 
 	// --- traces ---
 	sp, ok := dump.findSpan(service, spanName)
@@ -108,21 +114,26 @@ func env(key, def string) string {
 	return def
 }
 
-// waitForDump polls outPath until a line referencing run is present, then
-// returns the accumulated parse of the whole file.
-func waitForDump(t *testing.T, outPath, run string, timeout time.Duration) collectorDump {
+// waitForDump polls outPath, re-parsing the whole file, until done reports the
+// dump is complete or the timeout elapses. It always returns the last parse so
+// the assertions can report precisely what is missing on timeout.
+func waitForDump(t *testing.T, outPath string, timeout time.Duration, done func(collectorDump) bool) collectorDump {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
+	var last collectorDump
 	for {
-		dump, raw, err := readDump(outPath)
-		if err == nil && strings.Contains(raw, run) {
-			return dump
+		dump, _, err := readDump(outPath)
+		if err == nil {
+			last = dump
+			if done(dump) {
+				return dump
+			}
 		}
 		if time.Now().After(deadline) {
 			if err != nil {
 				t.Fatalf("reading collector output %q: %v", outPath, err)
 			}
-			t.Fatalf("timed out after %s waiting for run %q in %q", timeout, run, outPath)
+			return last
 		}
 		time.Sleep(200 * time.Millisecond)
 	}

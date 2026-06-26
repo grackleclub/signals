@@ -21,8 +21,14 @@ cd "$root"
 
 out_dir="$root/collector/out"
 out_file="$out_dir/signals.json"
-endpoint="${OTEL_EXPORTER_OTLP_ENDPOINT:-http://localhost:4318}"
-health="http://localhost:13133"
+
+# Host ports (override to dodge a local OTLP tunnel on 4318). Exported for
+# compose; the endpoint and health URL track whatever is chosen.
+export OTLP_HTTP_PORT="${OTLP_HTTP_PORT:-4318}"
+export OTLP_GRPC_PORT="${OTLP_GRPC_PORT:-4317}"
+export HEALTH_PORT="${HEALTH_PORT:-13133}"
+endpoint="${OTEL_EXPORTER_OTLP_ENDPOINT:-http://localhost:$OTLP_HTTP_PORT}"
+health="http://localhost:$HEALTH_PORT"
 
 # Export so docker compose runs the collector as us (readable output files).
 HOST_UID="$(id -u)"

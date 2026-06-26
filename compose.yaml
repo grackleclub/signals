@@ -12,7 +12,9 @@ services:
     volumes:
       - ./collector/config.yaml:/etc/otelcol-contrib/config.yaml:ro
       - ./collector/out:/out
+    # Host ports are overridable so a local OTLP tunnel on 4318 doesn't clash;
+    # bin/test exports these and points the test at the matching endpoint.
     ports:
-      - "4318:4318" # OTLP/HTTP (what signals exports to)
-      - "4317:4317" # OTLP/gRPC
-      - "13133:13133" # health_check
+      - "${OTLP_HTTP_PORT:-4318}:4318" # OTLP/HTTP (what signals exports to)
+      - "${OTLP_GRPC_PORT:-4317}:4317" # OTLP/gRPC
+      - "${HEALTH_PORT:-13133}:13133" # health_check
