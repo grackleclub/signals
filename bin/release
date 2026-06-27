@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+#
+# bin/release — compute the next semver tag, bump it, push it, cut a release.
+#
+# Patch by default; minor when MINOR=true (the release workflow sets this from
+# the merged PR's `minor` label). Runs in CI on a merged PR; locally use
+# `bin/release --dry-run` to preview the next tag without writing anything.
+#
+#   MINOR=true bin/release --dry-run
+#
+set -euo pipefail
+
+dry_run=false
+[[ "${1:-}" == "--dry-run" ]] && dry_run=true
+
+# Latest vX.Y.Z tag (semver-sorted), or v0.0.0 if none exists yet.
+latest="$(git tag -l 'v[0-9]*' --sort=-v:refname | head -n1)"
+latest="${latest:-v0.0.0}"
+
+if ! [[ "$latest" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+	echo "error: latest tag '$latest' is not vMAJOR.MINOR.PATCH" >&2
+	exit 1
+fi
+major="${BASH_REMATCH[1]}"
+minor="${BASH_REMATCH[2]}"
+patch="${BASH_REMATCH[3]}"
+
+if [[ "${MINOR:-false}" == "true" ]]; then
+	bump="minor"
+	minor=$((minor + 1))
+	patch=0
+else
+	bump="patch"
+	patch=$((patch + 1))
+fi
+next="v${major}.${minor}.${patch}"
+
+echo "==> ${latest} -> ${next} (${bump})"
+
+if [[ "$dry_run" == true ]]; then
+	exit 0
+fi
+
+git config user.name "github-actions[bot]"
+git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+git tag -a "$next" -m "$next"
+git push origin "$next"
+
+# Best-effort GitHub release with auto-generated notes; the tag above is the
+# real artifact (Go modules resolve by tag), so don't fail the run on this.
+if command -v gh >/dev/null 2>&1; then
+	gh release create "$next" --title "$next" --generate-notes || true
+fi

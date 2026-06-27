@@ -1,0 +1,32 @@
+name: release
+
+# On a merged PR into main, tag the next semver release. Patch by default;
+# add the `minor` label to the PR to bump the minor version instead.
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.ref }}
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: bump and tag
+        env:
+          MINOR: ${{ contains(github.event.pull_request.labels.*.name, 'minor') }}
+          GH_TOKEN: ${{ github.token }}
+        run: ./bin/release
