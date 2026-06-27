@@ -1,5 +1,8 @@
 # signals
 
+[![test](https://github.com/grackleclub/signals/actions/workflows/test.yml/badge.svg)](https://github.com/grackleclub/signals/actions/workflows/test.yml)
+[![release](https://img.shields.io/github/v/release/grackleclub/signals?sort=semver)](https://github.com/grackleclub/signals/releases/latest)
+
 OTel observability: logs, metrics, traces
 
 _(replaces [grackleclub/log](https://github.com/grackleclub/log))_
