@@ -111,7 +111,7 @@ func Setup(ctx context.Context, cfg Config) (
 
 // tracerProvider builds the OTLP/HTTP TracerProvider. The default sampler is
 // ParentBased(AlwaysSample) — overridable via OTEL_TRACES_SAMPLER — so the
-// SigNoz ingester sees complete traces to tail-sample. See DESIGN.md "sampling".
+// SigNoz ingester sees complete traces to tail-sample.
 func tracerProvider(ctx context.Context, oc otlpConfig, res *resource.Resource) (*sdktrace.TracerProvider, error) {
 	var opts []otlptracehttp.Option
 	if oc.host != "" {

@@ -11,6 +11,4 @@
 // Logs emitted with a context inside a span are correlated with their trace by
 // construction. With no OTLP endpoint configured, signals degrades to a
 // console-only logger — no exporters, no error ("graceful off").
-//
-// See DESIGN.md for the full rationale.
 package signals

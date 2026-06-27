@@ -43,7 +43,7 @@ func Logger(cfg Config, lp otellog.LoggerProvider) *slog.Logger {
 
 // consoleHandler is the pretty dev sink: tint, wrapped so a span context in the
 // log's ctx renders a short trace_id inline (the dev half of the correlation
-// contract — see DESIGN.md "logging").
+// contract).
 func consoleHandler(w io.Writer, level slog.Leveler, addSource bool) slog.Handler {
 	h := tint.NewHandler(w, &tint.Options{
 		Level:      level,

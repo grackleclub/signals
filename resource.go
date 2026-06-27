@@ -10,7 +10,7 @@ import (
 )
 
 // newResource builds the Resource shared by all three providers — the join key
-// SigNoz uses to correlate logs, metrics, and traces. See DESIGN.md "resource".
+// SigNoz uses to correlate logs, metrics, and traces.
 //
 // service.name and deployment.environment.name use the pinned semconv keys
 // (semconv.go); host.name comes from resource.WithHost and OTEL_RESOURCE_-
