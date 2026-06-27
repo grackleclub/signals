@@ -49,9 +49,22 @@ func consoleHandler(w io.Writer, level slog.Leveler, addSource bool) slog.Handle
 		Level:      level,
 		AddSource:  addSource,
 		TimeFormat: iso8601,
-		NoColor:    os.Getenv("NO_COLOR") != "" || !isTerminal(w),
+		NoColor:    noColor(w),
 	})
 	return newTraceHandler(h)
+}
+
+// noColor decides colorization: NO_COLOR forces it off; CLICOLOR_FORCE forces
+// it on (e.g. `bin/test pretty`, where go test pipes stderr so it isn't a TTY);
+// otherwise color only a real terminal.
+func noColor(w io.Writer) bool {
+	if os.Getenv("NO_COLOR") != "" {
+		return true
+	}
+	if os.Getenv("CLICOLOR_FORCE") != "" {
+		return false
+	}
+	return !isTerminal(w)
 }
 
 // isTerminal reports whether w is a character device (a TTY), so color is only

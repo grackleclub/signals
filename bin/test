@@ -77,7 +77,8 @@ unit() {
 
 pretty() {
 	echo "==> pretty (kitchen sink): every level/severity, inspectable below"
-	go test -v -run TestPretty ./...
+	# Force color: go test pipes the test's stderr, so tint can't detect a TTY.
+	CLICOLOR_FORCE=1 go test -v -run TestPretty ./...
 }
 
 itest() {
