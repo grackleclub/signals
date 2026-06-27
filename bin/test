@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+#
+# bin/test — the signals test driver.
+#
+# One entry point for the whole TDD loop: stand up the otelcol-contrib
+# collector in Docker, run unit and integration tests against it, and eyeball
+# the pretty console output.
+#
+#   bin/test unit        run unit tests (no collector, no network)
+#   bin/test pretty      print the kitchen-sink tint output (every level)
+#   bin/test up          start the collector, wait until healthy
+#   bin/test down        stop the collector, remove its output
+#   bin/test itest       run integration tests (auto-starts the collector)
+#   bin/test ci          up -> itest -> down (what CI runs)
+#   bin/test logs        tail the collector's received telemetry (debug exporter)
+#
+set -euo pipefail
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$root"
+
+out_dir="$root/collector/out"
+out_file="$out_dir/signals.json"
+
+# Host ports (override to dodge a local OTLP tunnel on 4318). Exported for
+# compose; the endpoint and health URL track whatever is chosen.
+export OTLP_HTTP_PORT="${OTLP_HTTP_PORT:-4318}"
+export OTLP_GRPC_PORT="${OTLP_GRPC_PORT:-4317}"
+export HEALTH_PORT="${HEALTH_PORT:-13133}"
+endpoint="${OTEL_EXPORTER_OTLP_ENDPOINT:-http://localhost:$OTLP_HTTP_PORT}"
+health="http://localhost:$HEALTH_PORT"
+
+# Export so docker compose runs the collector as us (readable output files).
+HOST_UID="$(id -u)"
+export HOST_UID
+HOST_GID="$(id -g)"
+export HOST_GID
+
+compose() { docker compose "$@"; }
+
+up() {
+	mkdir -p "$out_dir"
+	: >"$out_file" # fresh file each run so stale lines don't leak between runs
+	echo "==> starting collector"
+	if ! compose up -d; then
+		echo "error: collector failed to start" >&2
+		return 1
+	fi
+	wait_healthy
+}
+
+down() {
+	echo "==> stopping collector"
+	compose down --remove-orphans >/dev/null 2>&1 || true
+	rm -f "$out_file"
+}
+
+wait_healthy() {
+	echo -n "==> waiting for collector health"
+	for _ in $(seq 1 60); do
+		if curl -sf "$health" >/dev/null 2>&1; then
+			echo " ok"
+			return 0
+		fi
+		echo -n .
+		sleep 0.5
+	done
+	echo " timeout" >&2
+	compose logs collector >&2 || true
+	return 1
+}
+
+unit() {
+	echo "==> unit tests"
+	go test "$@" ./...
+}
+
+pretty() {
+	echo "==> pretty (kitchen sink): every level/severity, inspectable below"
+	# Force color: go test pipes the test's stderr, so tint can't detect a TTY.
+	CLICOLOR_FORCE=1 go test -v -run TestPretty ./...
+}
+
+itest() {
+	if ! curl -sf "$health" >/dev/null 2>&1; then
+		up
+	fi
+	echo "==> integration tests (endpoint=$endpoint)"
+	OTEL_EXPORTER_OTLP_ENDPOINT="$endpoint" \
+		SIGNALS_COLLECTOR_OUT="$out_file" \
+		go test -v -tags integration -run TestIntegration ./... "$@"
+}
+
+logs() {
+	compose logs -f collector
+}
+
+ci() {
+	trap down EXIT
+	up
+	itest
+}
+
+cmd="${1:-help}"
+shift || true
+case "$cmd" in
+unit | test) unit "$@" ;;
+pretty) pretty "$@" ;;
+up) up ;;
+down) down ;;
+itest) itest "$@" ;;
+logs) logs ;;
+ci) ci ;;
+help | -h | --help)
+	sed -n '3,15p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+	;;
+*)
+	echo "error: unknown command '$cmd' (try: bin/test help)" >&2
+	exit 2
+	;;
+esac

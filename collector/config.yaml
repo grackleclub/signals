@@ -1,0 +1,43 @@
+# otelcol-contrib config for the integration test harness.
+#
+# Receives OTLP from the app under test and writes every signal verbatim to a
+# JSON file (the file exporter) that the Go test reads back to assert logs,
+# metrics, and traces arrived sharing one identity. The debug exporter mirrors
+# to stdout (`docker compose logs collector`) for eyeballing.
+#
+# No batch processor on purpose: the file exporter then writes each export
+# immediately, so tests don't wait on a batch timeout.
+
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+      grpc:
+        endpoint: 0.0.0.0:4317
+
+exporters:
+  file:
+    path: /out/signals.json
+  debug:
+    verbosity: detailed
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+service:
+  extensions: [health_check]
+  telemetry:
+    logs:
+      level: info
+  pipelines:
+    traces:
+      receivers: [otlp]
+      exporters: [file, debug]
+    metrics:
+      receivers: [otlp]
+      exporters: [file, debug]
+    logs:
+      receivers: [otlp]
+      exporters: [file, debug]
