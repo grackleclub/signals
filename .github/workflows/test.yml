@@ -25,7 +25,7 @@ jobs:
 
       # Print the colored kitchen-sink so the pretty console output is
       # eyeball-able in the Actions log (GitHub renders ANSI).
-      - name: pretty (eyeball)
+      - name: pretty
         run: ./bin/test pretty
 
       # Stands up otelcol-contrib (docker compose is preinstalled on the
