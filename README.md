@@ -1,9 +1,8 @@
 # signals
 
-OTel-native observability for grackleclub services — logs, metrics, and traces
-from one `Setup`, exported over OTLP/HTTP to SigNoz.
+OTel observability: logs, metrics, traces
 
-_Replaces the logging role of [grackleclub/log](https://github.com/grackleclub/log)._
+_(replaces [grackleclub/log](https://github.com/grackleclub/log))_
 
 ## install
 
@@ -31,9 +30,9 @@ func main() {
 }
 ```
 
-`Setup` installs the global tracer, meter, and logger providers (sharing one
-resource) plus the W3C propagator, and returns a ready `*slog.Logger`. Call it
-once from `main`. Libraries don't call `Setup` — they read the globals:
+`Setup` installs the global tracer, meter, and logger providers (one shared
+resource) plus the W3C propagator, then returns a ready `*slog.Logger`. Call it
+once from `main`. Libraries read the globals instead:
 
 ```go
 var tracer = otel.Tracer("github.com/grackleclub/rulette/game")
@@ -42,35 +41,33 @@ var meter  = otel.Meter("github.com/grackleclub/rulette/game")
 
 ## config
 
-`Env` is the only required field; the rest fall back to `OTEL_*` env, then
-defaults.
+`Env` is required. Everything else falls back to `OTEL_*` env, then a default.
 
-| field | purpose |
-| --- | --- |
-| `Env` | `deployment.environment.name` (primary SigNoz dimension) |
-| `Service` | service name; default `OTEL_SERVICE_NAME`, then argv0 |
-| `Version` | `service.version` |
-| `Endpoint` | OTLP/HTTP URL; default `OTEL_EXPORTER_OTLP_ENDPOINT` |
-| `Token` | bearer auth, merged over `OTEL_EXPORTER_OTLP_HEADERS`; default `OTLP_INGEST_TOKEN` |
-| `StderrLevel` | console threshold (the OTLP sink ships every level) |
-| `DisableRuntimeMetrics` | turn off Go runtime metrics |
+| field | purpose | default |
+| --- | --- | --- |
+| `Env` | `deployment.environment.name` | required |
+| `Service` | service name | `OTEL_SERVICE_NAME`, then argv0 |
+| `Version` | `service.version` | none |
+| `Endpoint` | OTLP/HTTP URL | `OTEL_EXPORTER_OTLP_ENDPOINT` |
+| `Token` | bearer auth, merged over `OTEL_EXPORTER_OTLP_HEADERS` | `OTLP_INGEST_TOKEN` |
+| `StderrLevel` | console threshold | INFO |
+| `DisableRuntimeMetrics` | drop Go runtime metrics | false |
 
 ## behavior
 
-- **Correlated logs** — a log emitted with a span's context carries
-  `trace_id`/`span_id`; the console renders a short `trace_id` inline.
-- **Two sinks** — tint console (pretty, `StderrLevel`-gated, `NO_COLOR` aware)
-  and OTLP. The OTLP sink is unthresholded — filter in SigNoz.
-- **Graceful off** — no endpoint configured ⇒ console only, no error.
-- **Traces** — `ParentBased(AlwaysSample)` (override via `OTEL_TRACES_SAMPLER`);
-  tail-sampling lives at the collector.
-- **Metrics** — periodic OTLP reader plus Go runtime metrics; host metrics are
-  the collector's job.
+| topic | behavior |
+| --- | --- |
+| logs | two sinks: tint console (pretty, `StderrLevel`-gated, `NO_COLOR` aware) and OTLP |
+| correlation | a log with a span's context carries `trace_id`/`span_id`; console shows a short `trace_id` |
+| levels | console honors `StderrLevel`; OTLP ships every level, filter in SigNoz |
+| graceful off | no endpoint configured: console only, no error |
+| traces | `ParentBased(AlwaysSample)`, override via `OTEL_TRACES_SAMPLER`; tail-sample at the collector |
+| metrics | periodic OTLP reader plus Go runtime metrics; host metrics are the collector's |
 
 ## test
 
-```
-bin/test unit      # fast, no docker
-bin/test pretty    # eyeball the console output
-bin/test ci        # collector roundtrip (docker)
-```
+| command | does |
+| --- | --- |
+| `bin/test unit` | fast, no docker |
+| `bin/test pretty` | print the colored console output |
+| `bin/test ci` | collector roundtrip (docker) |
