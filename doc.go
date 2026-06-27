@@ -2,8 +2,15 @@
 // logs, metrics, and traces bootstrapped from one Setup call, exported over
 // OTLP/HTTP to SigNoz as the single source of truth.
 //
-// This is the TDD test-side skeleton: the public API exists but is stubbed
-// (every entry point returns errNotImplemented or nil), so the tests in this
-// package fail until the implementation lands. See DESIGN.md for the contract
-// and plan.md for what remains.
+// Call Setup once from main: it installs the global tracer, meter, and logger
+// providers plus the W3C propagator — all sharing one Resource — and returns a
+// ready *slog.Logger and a shutdown that flushes every exporter. Libraries do
+// not call Setup; they obtain a tracer/meter from the installed globals via
+// otel.Tracer(scope) / otel.Meter(scope).
+//
+// Logs emitted with a context inside a span are correlated with their trace by
+// construction. With no OTLP endpoint configured, signals degrades to a
+// console-only logger — no exporters, no error ("graceful off").
+//
+// See DESIGN.md for the full rationale.
 package signals

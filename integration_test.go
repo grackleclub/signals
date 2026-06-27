@@ -26,9 +26,6 @@ const scope = "github.com/grackleclub/signals/itest"
 // Requires a collector (./bin/test up). Env:
 //   - OTEL_EXPORTER_OTLP_ENDPOINT  (default http://localhost:4318)
 //   - SIGNALS_COLLECTOR_OUT        (default ./collector/out/signals.json)
-//
-// Fails today because Setup is stubbed; it is the executable spec for the
-// implementation.
 func TestIntegration_Signals(t *testing.T) {
 	endpoint := env("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318")
 	outPath := env("SIGNALS_COLLECTOR_OUT", "collector/out/signals.json")

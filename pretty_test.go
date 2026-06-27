@@ -17,13 +17,11 @@ import (
 //	./bin/test pretty      # go test -run TestPretty -v
 //
 // It is not a golden-file assertion — the value is eyeballing the pretty
-// output (color, ISO8601, inline trace_id correlation). Today it fails fast
-// because Logger is stubbed (returns nil); once the console handler lands the
-// output prints here.
+// output (color, ISO8601, inline trace_id correlation).
 func TestPretty(t *testing.T) {
 	log := signals.Logger(signals.Config{StderrLevel: slog.LevelDebug}, nil)
 	if log == nil {
-		t.Fatal("Logger returned nil (not implemented) — no pretty output to show yet")
+		t.Fatal("Logger returned nil")
 	}
 
 	// A fixed span context so the console handler renders a short trace_id

@@ -10,8 +10,7 @@ import (
 
 // These unit tests need no collector and no network. They pin the console-only
 // contract: with no OTLP endpoint resolved, signals degrades to a working
-// console logger with no error ("graceful off"). They fail today because Setup
-// and Logger are stubbed.
+// console logger with no error ("graceful off").
 
 func TestSetup_GracefulOff(t *testing.T) {
 	// No endpoint, no OTEL_* env => console-only, no exporters, no error.

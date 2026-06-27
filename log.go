@@ -18,8 +18,8 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-// tintTimeFormat is ISO8601 with millisecond precision.
-const tintTimeFormat = "2006-01-02T15:04:05.000Z07:00"
+// iso8601 is the console timestamp format, matching grackleclub/log's ISO8601.
+const iso8601 = "2006-01-02T15:04:05.000Z"
 
 // Logger builds the fanout slog.Logger: a tint console handler plus, when lp is
 // non-nil, an otelslog handler bridging to lp. It installs no globals and owns
@@ -48,7 +48,7 @@ func consoleHandler(w io.Writer, level slog.Leveler, addSource bool) slog.Handle
 	h := tint.NewHandler(w, &tint.Options{
 		Level:      level,
 		AddSource:  addSource,
-		TimeFormat: tintTimeFormat,
+		TimeFormat: iso8601,
 		NoColor:    os.Getenv("NO_COLOR") != "" || !isTerminal(w),
 	})
 	return newTraceHandler(h)
