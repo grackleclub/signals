@@ -49,7 +49,7 @@ Every field falls back to `OTEL_*` env, then a default.
 | field | purpose | default |
 | --- | --- | --- |
 | `Env` | `deployment.environment.name` | `OTEL_RESOURCE_ATTRIBUTES`, then `unknown` |
-| `Service` | service name | `OTEL_SERVICE_NAME`, then argv0 |
+| `Service` | `service.name` | `OTEL_SERVICE_NAME`, then argv0 |
 | `Version` | `service.version` | none |
 | `Endpoint` | OTLP/HTTP URL | `OTEL_EXPORTER_OTLP_ENDPOINT` |
 | `Token` | bearer auth, merged over `OTEL_EXPORTER_OTLP_HEADERS` | `OTLP_INGEST_TOKEN` |
