@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
+	"os"
+	"strings"
 
 	"go.opentelemetry.io/contrib/instrumentation/runtime"
 	"go.opentelemetry.io/otel"
@@ -66,15 +68,24 @@ func Setup(ctx context.Context, cfg Config) (
 		return shutdown, Logger(cfg, nil), nil
 	}
 
-	tp, err := tracerProvider(ctx, cfg, res)
+	oc, err := cfg.otlp()
 	if err != nil {
+		return nil, nil, fmt.Errorf("signals setup: %w", err)
+	}
+
+	// On any failure past here, flush/close what's already installed before
+	// returning — a failed Setup must not leak exporters or batch goroutines.
+	tp, err := tracerProvider(ctx, oc, res)
+	if err != nil {
+		_ = shutdown(ctx)
 		return nil, nil, fmt.Errorf("signals setup traces: %w", err)
 	}
 	otel.SetTracerProvider(tp)
 	closers = append(closers, tp.Shutdown)
 
-	mp, err := meterProvider(ctx, cfg, res)
+	mp, err := meterProvider(ctx, oc, res)
 	if err != nil {
+		_ = shutdown(ctx)
 		return nil, nil, fmt.Errorf("signals setup metrics: %w", err)
 	}
 	otel.SetMeterProvider(mp)
@@ -82,12 +93,14 @@ func Setup(ctx context.Context, cfg Config) (
 
 	if !cfg.DisableRuntimeMetrics {
 		if err := runtime.Start(runtime.WithMeterProvider(mp)); err != nil {
+			_ = shutdown(ctx)
 			return nil, nil, fmt.Errorf("signals setup runtime metrics: %w", err)
 		}
 	}
 
-	lp, err := loggerProvider(ctx, cfg, res)
+	lp, err := loggerProvider(ctx, oc, res)
 	if err != nil {
+		_ = shutdown(ctx)
 		return nil, nil, fmt.Errorf("signals setup logs: %w", err)
 	}
 	logglobal.SetLoggerProvider(lp)
@@ -99,19 +112,19 @@ func Setup(ctx context.Context, cfg Config) (
 // tracerProvider builds the OTLP/HTTP TracerProvider. The default sampler is
 // ParentBased(AlwaysSample) — overridable via OTEL_TRACES_SAMPLER — so the
 // SigNoz ingester sees complete traces to tail-sample. See DESIGN.md "sampling".
-func tracerProvider(ctx context.Context, cfg Config, res *resource.Resource) (*sdktrace.TracerProvider, error) {
+func tracerProvider(ctx context.Context, oc otlpConfig, res *resource.Resource) (*sdktrace.TracerProvider, error) {
 	var opts []otlptracehttp.Option
-	if host, insecure, path := endpointParts(cfg.Endpoint); host != "" {
-		opts = append(opts, otlptracehttp.WithEndpoint(host))
-		if insecure {
+	if oc.host != "" {
+		opts = append(opts, otlptracehttp.WithEndpoint(oc.host))
+		if oc.insecure {
 			opts = append(opts, otlptracehttp.WithInsecure())
 		}
-		if path != "" {
-			opts = append(opts, otlptracehttp.WithURLPath(path))
+		if oc.path != "" {
+			opts = append(opts, otlptracehttp.WithURLPath(oc.path))
 		}
 	}
-	if cfg.Token != "" {
-		opts = append(opts, otlptracehttp.WithHeaders(bearer(cfg.Token)))
+	if len(oc.headers) > 0 {
+		opts = append(opts, otlptracehttp.WithHeaders(oc.headers))
 	}
 	exp, err := otlptracehttp.New(ctx, opts...)
 	if err != nil {
@@ -125,19 +138,19 @@ func tracerProvider(ctx context.Context, cfg Config, res *resource.Resource) (*s
 
 // meterProvider builds the OTLP/HTTP MeterProvider with a periodic reader (the
 // SDK default interval, overridable via OTEL_METRIC_EXPORT_INTERVAL).
-func meterProvider(ctx context.Context, cfg Config, res *resource.Resource) (*sdkmetric.MeterProvider, error) {
+func meterProvider(ctx context.Context, oc otlpConfig, res *resource.Resource) (*sdkmetric.MeterProvider, error) {
 	var opts []otlpmetrichttp.Option
-	if host, insecure, path := endpointParts(cfg.Endpoint); host != "" {
-		opts = append(opts, otlpmetrichttp.WithEndpoint(host))
-		if insecure {
+	if oc.host != "" {
+		opts = append(opts, otlpmetrichttp.WithEndpoint(oc.host))
+		if oc.insecure {
 			opts = append(opts, otlpmetrichttp.WithInsecure())
 		}
-		if path != "" {
-			opts = append(opts, otlpmetrichttp.WithURLPath(path))
+		if oc.path != "" {
+			opts = append(opts, otlpmetrichttp.WithURLPath(oc.path))
 		}
 	}
-	if cfg.Token != "" {
-		opts = append(opts, otlpmetrichttp.WithHeaders(bearer(cfg.Token)))
+	if len(oc.headers) > 0 {
+		opts = append(opts, otlpmetrichttp.WithHeaders(oc.headers))
 	}
 	exp, err := otlpmetrichttp.New(ctx, opts...)
 	if err != nil {
@@ -149,26 +162,55 @@ func meterProvider(ctx context.Context, cfg Config, res *resource.Resource) (*sd
 	), nil
 }
 
-func bearer(token string) map[string]string {
-	return map[string]string{"Authorization": "Bearer " + token}
+// otlpConfig is the OTLP/HTTP transport resolved once from Config and shared by
+// all three exporters. A zero host means "no explicit endpoint" — the exporters
+// then read OTEL_EXPORTER_OTLP[_*]_ENDPOINT natively (per-signal precedence,
+// default /v1/{signal} paths). nil headers likewise defer to the SDK's env.
+type otlpConfig struct {
+	host     string
+	insecure bool
+	path     string
+	headers  map[string]string
 }
 
-// endpointParts splits an OTLP endpoint into the host:port, whether it's plain
-// HTTP (insecure), and any explicit base path. A path of "" lets the exporter
-// append its default per-signal path (/v1/traces, /v1/metrics, /v1/logs); a
-// non-empty endpoint with no scheme is treated as a bare host:port. host is
-// empty only when raw is empty (the console-only case).
-func endpointParts(raw string) (host string, insecure bool, path string) {
-	if raw == "" {
-		return "", false, ""
+// otlp resolves the OTLP transport from Config. An explicit Config.Endpoint is
+// validated and split into host/insecure/path (and, being explicit, overrides
+// the env). A Token becomes a bearer header merged over OTEL_EXPORTER_OTLP_-
+// HEADERS so both are honored rather than one clobbering the other.
+func (c Config) otlp() (otlpConfig, error) {
+	var oc otlpConfig
+	if c.Endpoint != "" {
+		u, err := url.Parse(c.Endpoint)
+		if err != nil {
+			return otlpConfig{}, fmt.Errorf("parsing endpoint %q: %w", c.Endpoint, err)
+		}
+		if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			return otlpConfig{}, fmt.Errorf(
+				"endpoint %q must be an http(s) URL with a host", c.Endpoint)
+		}
+		oc.host = u.Host
+		oc.insecure = u.Scheme == "http"
+		if oc.path = u.Path; oc.path == "/" {
+			oc.path = ""
+		}
 	}
-	u, err := url.Parse(raw)
-	if err != nil || u.Host == "" {
-		return raw, false, "" // best effort: a bare host:port
+	if c.Token != "" {
+		oc.headers = envHeaders()
+		oc.headers["Authorization"] = "Bearer " + c.Token
 	}
-	path = u.Path
-	if path == "/" {
-		path = ""
+	return oc, nil
+}
+
+// envHeaders parses OTEL_EXPORTER_OTLP_HEADERS ("k1=v1,k2=v2") so a bearer Token
+// can be merged with caller-set headers instead of replacing them.
+func envHeaders() map[string]string {
+	h := map[string]string{}
+	for kv := range strings.SplitSeq(os.Getenv("OTEL_EXPORTER_OTLP_HEADERS"), ",") {
+		k, v, ok := strings.Cut(strings.TrimSpace(kv), "=")
+		if !ok || k == "" {
+			continue
+		}
+		h[strings.TrimSpace(k)] = strings.TrimSpace(v)
 	}
-	return u.Host, u.Scheme == "http", path
+	return h
 }

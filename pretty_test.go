@@ -21,12 +21,12 @@ import (
 // because Logger is stubbed (returns nil); once the console handler lands the
 // output prints here.
 func TestPretty(t *testing.T) {
-	log := signals.Logger(signals.Config{Level: slog.LevelDebug}, nil)
+	log := signals.Logger(signals.Config{StderrLevel: slog.LevelDebug}, nil)
 	if log == nil {
 		t.Fatal("Logger returned nil (not implemented) — no pretty output to show yet")
 	}
 
-	// A fixed span context so the console handler renders trace_id/span_id
+	// A fixed span context so the console handler renders a short trace_id
 	// inline, demonstrating the correlation contract in dev.
 	tid, _ := trace.TraceIDFromHex("0123456789abcdef0123456789abcdef")
 	sid, _ := trace.SpanIDFromHex("0123456789abcdef")

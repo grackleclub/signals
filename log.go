@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"slices"
 
 	"github.com/lmittmann/tint"
 	"go.opentelemetry.io/contrib/bridges/otelslog"
@@ -27,6 +28,9 @@ const tintTimeFormat = "2006-01-02T15:04:05.000Z07:00"
 func Logger(cfg Config, lp otellog.LoggerProvider) *slog.Logger {
 	level, addSource := cfg.levelSource()
 
+	// The console sink is gated by Config.StderrLevel. The OTLP sink is added
+	// without a level on purpose: it ships every severity to SigNoz, which is
+	// the source of truth and the place to filter. See Config.StderrLevel.
 	handlers := []slog.Handler{consoleHandler(os.Stderr, level, addSource)}
 	if lp != nil {
 		handlers = append(handlers, otelslog.NewHandler(
@@ -47,7 +51,7 @@ func consoleHandler(w io.Writer, level slog.Leveler, addSource bool) slog.Handle
 		TimeFormat: tintTimeFormat,
 		NoColor:    os.Getenv("NO_COLOR") != "" || !isTerminal(w),
 	})
-	return &traceHandler{Handler: h}
+	return newTraceHandler(h)
 }
 
 // isTerminal reports whether w is a character device (a TTY), so color is only
@@ -67,24 +71,65 @@ func isTerminal(w io.Writer) bool {
 // traceHandler decorates records with a short trace_id when the ctx carries a
 // valid span context. Only the console path uses it; otelslog attaches full
 // trace context to OTLP records natively.
+//
+// The trace_id is kept at the top level even when the caller has opened a
+// group: in the common (no-group) case it is appended to the record; once a
+// group is open it is injected at the ungrouped base and the caller's
+// groups/attrs are replayed over it. The record handed to Handle is already a
+// private copy (fanoutHandler clones per child), so it is mutated in place.
 type traceHandler struct {
-	slog.Handler
+	inner   slog.Handler                      // base + caller mods, for emit
+	base    slog.Handler                      // ungrouped base, for top-level id
+	mods    []func(slog.Handler) slog.Handler // caller WithAttrs/WithGroup, in order
+	grouped bool                              // any WithGroup applied
+}
+
+func newTraceHandler(base slog.Handler) *traceHandler {
+	return &traceHandler{inner: base, base: base}
+}
+
+func (h *traceHandler) with(mod func(slog.Handler) slog.Handler, group bool) *traceHandler {
+	return &traceHandler{
+		inner:   mod(h.inner),
+		base:    h.base,
+		mods:    append(slices.Clip(h.mods), mod),
+		grouped: h.grouped || group,
+	}
+}
+
+func (h *traceHandler) Enabled(ctx context.Context, level slog.Level) bool {
+	return h.inner.Enabled(ctx, level)
 }
 
 func (h *traceHandler) Handle(ctx context.Context, r slog.Record) error {
-	if sc := trace.SpanContextFromContext(ctx); sc.IsValid() {
-		r = r.Clone()
-		r.AddAttrs(slog.String("trace_id", shortID(sc.TraceID().String())))
+	sc := trace.SpanContextFromContext(ctx)
+	if !sc.IsValid() {
+		return h.inner.Handle(ctx, r)
 	}
-	return h.Handler.Handle(ctx, r)
+	id := slog.String("trace_id", shortID(sc.TraceID().String()))
+	if !h.grouped {
+		r.AddAttrs(id)
+		return h.inner.Handle(ctx, r)
+	}
+	emit := h.base.WithAttrs([]slog.Attr{id})
+	for _, m := range h.mods {
+		emit = m(emit)
+	}
+	return emit.Handle(ctx, r)
 }
 
 func (h *traceHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
-	return &traceHandler{Handler: h.Handler.WithAttrs(attrs)}
+	if len(attrs) == 0 {
+		return h
+	}
+	return h.with(func(x slog.Handler) slog.Handler { return x.WithAttrs(attrs) }, false)
 }
 
 func (h *traceHandler) WithGroup(name string) slog.Handler {
-	return &traceHandler{Handler: h.Handler.WithGroup(name)}
+	if name == "" {
+		return h
+	}
+	return h.with(func(x slog.Handler) slog.Handler { return x.WithGroup(name) }, true)
 }
 
 func shortID(id string) string {
@@ -144,19 +189,19 @@ func (f *fanoutHandler) WithGroup(name string) slog.Handler {
 
 // loggerProvider builds the OTLP/HTTP LoggerProvider. The caller installs it as
 // the global and owns its Shutdown.
-func loggerProvider(ctx context.Context, cfg Config, res *resource.Resource) (*sdklog.LoggerProvider, error) {
+func loggerProvider(ctx context.Context, oc otlpConfig, res *resource.Resource) (*sdklog.LoggerProvider, error) {
 	var opts []otlploghttp.Option
-	if host, insecure, path := endpointParts(cfg.Endpoint); host != "" {
-		opts = append(opts, otlploghttp.WithEndpoint(host))
-		if insecure {
+	if oc.host != "" {
+		opts = append(opts, otlploghttp.WithEndpoint(oc.host))
+		if oc.insecure {
 			opts = append(opts, otlploghttp.WithInsecure())
 		}
-		if path != "" {
-			opts = append(opts, otlploghttp.WithURLPath(path))
+		if oc.path != "" {
+			opts = append(opts, otlploghttp.WithURLPath(oc.path))
 		}
 	}
-	if cfg.Token != "" {
-		opts = append(opts, otlploghttp.WithHeaders(bearer(cfg.Token)))
+	if len(oc.headers) > 0 {
+		opts = append(opts, otlploghttp.WithHeaders(oc.headers))
 	}
 	exp, err := otlploghttp.New(ctx, opts...)
 	if err != nil {

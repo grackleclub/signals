@@ -35,7 +35,7 @@ func TestSetup_GracefulOff(t *testing.T) {
 
 func TestLogger_ConsoleOnly(t *testing.T) {
 	// Logger(cfg, nil) wires console-only and must hand back a usable logger.
-	log := signals.Logger(signals.Config{Env: "test", Level: slog.LevelInfo}, nil)
+	log := signals.Logger(signals.Config{Env: "test", StderrLevel: slog.LevelInfo}, nil)
 	if log == nil {
 		t.Fatal("Logger(cfg, nil) returned nil")
 	}

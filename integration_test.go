@@ -38,6 +38,7 @@ func TestIntegration_Signals(t *testing.T) {
 	service := "signals-" + run
 	spanName := "span-" + run
 	logBody := "log-" + run
+	debugBody := "debug-" + run
 	metricName := "events." + run
 
 	ctx := context.Background()
@@ -58,6 +59,9 @@ func TestIntegration_Signals(t *testing.T) {
 	wantSpan := span.SpanContext().SpanID().String()
 
 	log.InfoContext(ctx, logBody, "run", run)
+	// Below the default StderrLevel (INFO): must still reach OTLP, since the
+	// OTLP sink is intentionally unthresholded (SigNoz filters).
+	log.DebugContext(ctx, debugBody, "run", run)
 
 	counter, err := otel.Meter(scope).Int64Counter(metricName)
 	if err != nil {
@@ -77,7 +81,8 @@ func TestIntegration_Signals(t *testing.T) {
 	dump := waitForDump(t, outPath, 15*time.Second, func(d collectorDump) bool {
 		_, hasSpan := d.findSpan(service, spanName)
 		_, hasLog := d.findLog(service, logBody)
-		return hasSpan && hasLog && d.hasMetric(service, metricName)
+		_, hasDebug := d.findLog(service, debugBody)
+		return hasSpan && hasLog && hasDebug && d.hasMetric(service, metricName)
 	})
 
 	// --- traces ---
@@ -105,6 +110,11 @@ func TestIntegration_Signals(t *testing.T) {
 	if lr.SpanID != wantSpan {
 		t.Errorf("log spanId = %s, want %s", lr.SpanID, wantSpan)
 	}
+
+	// --- OTLP sink is unthresholded: the DEBUG log shipped despite INFO console ---
+	if _, ok := dump.findLog(service, debugBody); !ok {
+		t.Errorf("debug log %q absent from OTLP — StderrLevel must not gate the OTLP sink", debugBody)
+	}
 }
 
 func env(key, def string) string {
@@ -122,7 +132,7 @@ func waitForDump(t *testing.T, outPath string, timeout time.Duration, done func(
 	deadline := time.Now().Add(timeout)
 	var last collectorDump
 	for {
-		dump, _, err := readDump(outPath)
+		dump, err := readDump(outPath)
 		if err == nil {
 			last = dump
 			if done(dump) {
@@ -250,17 +260,15 @@ func (r otlpResource) service() string {
 	return ""
 }
 
-// readDump parses every JSON line of outPath into a collectorDump and returns
-// the raw text (used for the cheap run-id presence poll).
-func readDump(path string) (collectorDump, string, error) {
+// readDump parses every JSON line of outPath into a collectorDump.
+func readDump(path string) (collectorDump, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
-		return collectorDump{}, "", err
+		return collectorDump{}, err
 	}
-	raw := string(b)
 
 	var d collectorDump
-	for _, line := range strings.Split(raw, "\n") {
+	for _, line := range strings.Split(string(b), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
@@ -301,5 +309,5 @@ func readDump(path string) (collectorDump, string, error) {
 			}
 		}
 	}
-	return d, raw, nil
+	return d, nil
 }

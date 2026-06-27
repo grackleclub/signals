@@ -2,6 +2,7 @@ package signals
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -28,7 +29,12 @@ func newResource(ctx context.Context, cfg Config) (*resource.Resource, error) {
 		resource.WithFromEnv(),
 		resource.WithAttributes(attrs...),
 	)
-	if err != nil {
+	// resource.New returns a usable resource alongside these non-fatal merge
+	// errors (schema-URL mismatch between detectors, or a partially-failed
+	// detector). Don't take down the whole service at startup for them.
+	if err != nil &&
+		!errors.Is(err, resource.ErrSchemaURLConflict) &&
+		!errors.Is(err, resource.ErrPartialResource) {
 		return nil, fmt.Errorf("building resource: %w", err)
 	}
 	return res, nil

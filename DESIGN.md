@@ -80,10 +80,11 @@ type Config struct {
     // satisfy the ingest auth gate. Defaults to OTLP_INGEST_TOKEN.
     Token string
 
-    // Level is the threshold for both sinks. Default INFO; the DEBUG env var
-    // lifts it to DEBUG + source (matching log's existing behavior). Set it
-    // per environment.
-    Level slog.Level
+    // StderrLevel is the threshold for the tint console (stderr) sink only.
+    // The OTLP sink exports every level — SigNoz is the source of truth and
+    // filters there. Default INFO; the DEBUG env var lifts it to DEBUG + source
+    // (matching log's existing behavior). Set it per environment.
+    StderrLevel slog.Level
 
     // DisableRuntimeMetrics turns off the bundled Go runtime metrics (GC,
     // goroutines, heap), which are collected by default.
@@ -260,7 +261,7 @@ None remaining — see resolved below.
 
 ### resolved
 
-- **Single log level**: one `Config.Level` for both sinks, set per environment, rather than separate console/OTLP levels.
+- **Console-only level**: `Config.StderrLevel` gates the tint console sink; the OTLP sink ships every level (SigNoz is the source of truth and filters there). The DEBUG env var lifts the console level + source.
 - **Metric defaults**: default export interval (env-overridable via `OTEL_METRIC_EXPORT_INTERVAL`); no host metrics (the collector owns them); Go runtime metrics on by default with `Config.DisableRuntimeMetrics` opt-out. See [metrics](#metrics).
 - **Logger from `Setup`** (vs. providers-only): `Setup` returns the ready logger for the consistent path; `Logger` remains for manual composition.
 - **`Logger` and the LoggerProvider**: `Logger` takes the `LoggerProvider` as an explicit argument (`nil` = console-only) rather than creating one it can't shut down or silently binding to the global. This keeps it lifecycle-free; the caller (or `Setup`) owns provider shutdown.

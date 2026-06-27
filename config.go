@@ -22,18 +22,21 @@ type Config struct {
 	// Version sets service.version (e.g. a build tag / git sha). Optional.
 	Version string
 
-	// Endpoint overrides the OTLP/HTTP endpoint. Defaults to
-	// OTEL_EXPORTER_OTLP_ENDPOINT. Empty after resolution (and no per-signal
-	// endpoint set) => OTLP sinks are not installed (console-only).
+	// Endpoint overrides the OTLP/HTTP endpoint and must be a full http(s) URL
+	// (e.g. "https://ingest.example.com"). When empty, the exporters read
+	// OTEL_EXPORTER_OTLP[_{TRACES,METRICS,LOGS}]_ENDPOINT directly. With neither
+	// set, OTLP sinks are not installed (console-only — "graceful off").
 	Endpoint string
 
-	// Token, when non-empty, is sent as "Authorization: Bearer <token>" to
-	// satisfy the ingest auth gate. Defaults to OTLP_INGEST_TOKEN.
+	// Token, when non-empty, is sent as "Authorization: Bearer <token>", merged
+	// over OTEL_EXPORTER_OTLP_HEADERS. Defaults to OTLP_INGEST_TOKEN.
 	Token string
 
-	// Level is the threshold for both sinks. Default INFO; the DEBUG env var
-	// lifts it to DEBUG + source.
-	Level slog.Level
+	// StderrLevel is the threshold for the tint console (stderr) sink only. The
+	// OTLP sink intentionally exports every level — SigNoz is the source of
+	// truth and filters there. Default INFO; the DEBUG env var lifts it to
+	// DEBUG + source.
+	StderrLevel slog.Level
 
 	// DisableRuntimeMetrics turns off the bundled Go runtime metrics (GC,
 	// goroutines, heap), which are collected by default.
@@ -41,7 +44,10 @@ type Config struct {
 }
 
 // resolved fills empty fields from the standard OTEL_* env vars and defaults.
-// Config fields win over env; env wins over built-in defaults.
+// Config fields win over env; env wins over built-in defaults. Endpoint is
+// deliberately NOT folded in from env here — leaving Config.Endpoint empty lets
+// the exporters honor OTEL_EXPORTER_OTLP[_*]_ENDPOINT natively (per-signal
+// precedence, default /v1/{signal} paths). See Config.otlp.
 func (c Config) resolved() Config {
 	if c.Service == "" {
 		c.Service = os.Getenv("OTEL_SERVICE_NAME")
@@ -49,23 +55,21 @@ func (c Config) resolved() Config {
 	if c.Service == "" && len(os.Args) > 0 {
 		c.Service = filepath.Base(os.Args[0])
 	}
-	if c.Endpoint == "" {
-		c.Endpoint = os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
-	}
 	if c.Token == "" {
 		c.Token = os.Getenv("OTLP_INGEST_TOKEN")
 	}
 	return c
 }
 
-// otlpEnabled reports whether an OTLP endpoint is configured at all. When it is
-// not, Setup degrades to console-only ("graceful off") — no exporters, no
-// error. Mirrors the per-signal env vars the OTLP SDK honors itself.
+// otlpEnabled reports whether an OTLP endpoint is configured at all, via Config
+// or any of the standard endpoint env vars. When it is not, Setup degrades to
+// console-only ("graceful off") — no exporters, no error.
 func (c Config) otlpEnabled() bool {
 	if c.Endpoint != "" {
 		return true
 	}
 	for _, k := range []string{
+		"OTEL_EXPORTER_OTLP_ENDPOINT",
 		"OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
 		"OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
 		"OTEL_EXPORTER_OTLP_LOGS_ENDPOINT",
@@ -77,14 +81,15 @@ func (c Config) otlpEnabled() bool {
 	return false
 }
 
-// levelSource resolves the log threshold and source toggle. The DEBUG env var
-// lifts the level to DEBUG and turns on source locations, matching log's
-// existing behavior; otherwise Config.Level applies.
+// levelSource resolves the console threshold and source toggle. The DEBUG env
+// var lifts the level to DEBUG and turns on source locations; otherwise
+// Config.StderrLevel applies. (The OTLP sink is unaffected — it ships all
+// levels.)
 func (c Config) levelSource() (slog.Level, bool) {
 	if debugEnv() {
 		return slog.LevelDebug, true
 	}
-	return c.Level, false
+	return c.StderrLevel, false
 }
 
 func debugEnv() bool {
