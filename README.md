@@ -13,7 +13,7 @@ _(replaces [grackleclub/log](https://github.com/grackleclub/log))_
 go get github.com/grackleclub/signals
 ```
 
-Requires Go 1.25.
+_requires go v1.25+_
 
 ## use
 
@@ -25,11 +25,11 @@ func main() {
 		Version: build.SHA,
 	})
 	if err != nil {
-		panic(err)
+		panic(fmt.Errorf("setup signals: %w", err)
 	}
 	defer shutdown(ctx) // flush telemetry on exit
 
-	log.InfoContext(ctx, "starting", "addr", addr) // correlated inside a span
+	log.InfoContext(ctx, "starting", "addr", addr) // contains span details for correlation
 }
 ```
 
