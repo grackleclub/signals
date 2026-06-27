@@ -12,7 +12,8 @@ import (
 // fields override OTEL_* env vars, which override built-in defaults.
 type Config struct {
 	// Env sets deployment.environment.name on every signal (e.g. "prod",
-	// "staging", "dev"). Required — it's the primary SigNoz dimension.
+	// "staging", "dev"); the primary SigNoz dimension. Defaults to the value in
+	// OTEL_RESOURCE_ATTRIBUTES if set, otherwise "unknown".
 	Env string
 
 	// Service overrides the service name. Defaults to OTEL_SERVICE_NAME, then
