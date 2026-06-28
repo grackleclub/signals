@@ -28,6 +28,7 @@ func main() {
 		panic(fmt.Errorf("setup signals: %w", err)
 	}
 	defer shutdown(ctx) // flush telemetry on exit
+	slog.SetDefault(log) // make log the process-wide default
 
 	log.InfoContext(ctx, "starting", "addr", addr) // contains span details for correlation
 }
@@ -35,12 +36,29 @@ func main() {
 
 `Setup` installs the global tracer, meter, and logger providers (one shared
 resource) plus the W3C propagator, then returns a ready `*slog.Logger`. Call it
-once from `main`. Libraries read the globals instead:
+once from `main`.
+
+Traces and metrics go into OTel's global registry, so any library can summon
+them with no plumbing:
 
 ```go
 var tracer = otel.Tracer("github.com/grackleclub/rulette/game")
 var meter  = otel.Meter("github.com/grackleclub/rulette/game")
 ```
+
+The logger is the exception: `Setup` returns it rather than calling
+`slog.SetDefault`, because a library mutating the caller's process-wide default
+is a surprising side effect that belongs to `main`, not to `signals`. Declare it
+as the default yourself, once, in `main`:
+
+```go
+slog.SetDefault(log)
+```
+
+Now the same global-registry ergonomics apply to all three signals: use
+package-level `slog.InfoContext(ctx, ...)` anywhere, with no logger field to
+thread and no parameter to pass. Skip the `SetDefault` call only if you
+deliberately want to scope the logger and pass `log` around by hand.
 
 ## config
 
