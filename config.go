@@ -33,7 +33,7 @@ type Config struct {
 	// over OTEL_EXPORTER_OTLP_HEADERS. Defaults to OTLP_INGEST_TOKEN.
 	Token string
 
-	// StderrLevel is the threshold for the tint console (stderr) sink only. The
+	// StderrLevel is the threshold for the pterm console (stderr) sink only. The
 	// OTLP sink intentionally exports every level — SigNoz is the source of
 	// truth and filters there. Default INFO; the DEBUG env var lifts it to
 	// DEBUG + source.
@@ -42,6 +42,32 @@ type Config struct {
 	// DisableRuntimeMetrics turns off the bundled Go runtime metrics (GC,
 	// goroutines, heap), which are collected by default.
 	DisableRuntimeMetrics bool
+
+	// Console tunes the pterm console (stderr) sink. The zero value is the
+	// drop-in default: timestamps on, caller off (unless DEBUG), pterm's own
+	// line wrapping.
+	Console Console
+}
+
+// Console configures the pterm-backed console sink, the pretty half of the
+// logger. It only shapes stderr output; the OTLP sink is unaffected. pterm is
+// a process-global singleton, so the styling signals applies here (writer,
+// color) is shared by every pterm component a consumer uses directly — tables,
+// spinners, and the rest. That shared state is the point: one consistent look
+// across the fleet with no per-call wiring.
+type Console struct {
+	// NoTime drops the leading ISO8601 timestamp. pterm shows it by default.
+	NoTime bool
+
+	// Caller forces source locations on even without DEBUG (which already
+	// turns them on together with debug level). pterm derives the caller by
+	// stack offset rather than from the record, so the location is best-effort
+	// through the fanout wrappers.
+	Caller bool
+
+	// MaxWidth wraps a line (message plus its args) at this column. 0 keeps
+	// pterm's default of 80.
+	MaxWidth int
 }
 
 // resolved fills empty fields from the standard OTEL_* env vars and defaults.
@@ -90,7 +116,7 @@ func (c Config) levelSource() (slog.Level, bool) {
 	if debugEnv() {
 		return slog.LevelDebug, true
 	}
-	return c.StderrLevel, false
+	return c.StderrLevel, c.Console.Caller
 }
 
 func debugEnv() bool {

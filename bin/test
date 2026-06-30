@@ -7,7 +7,8 @@
 # the pretty console output.
 #
 #   bin/test unit        run unit tests (no collector, no network)
-#   bin/test pretty      print the kitchen-sink tint output (every level)
+#   bin/test pretty      print the kitchen-sink pterm output (every level)
+#   bin/test showcase    print every console feature (tables, trees, ...)
 #   bin/test up          start the collector, wait until healthy
 #   bin/test down        stop the collector, remove its output
 #   bin/test itest       run integration tests (auto-starts the collector)
@@ -77,8 +78,13 @@ unit() {
 
 pretty() {
 	echo "==> pretty (kitchen sink): every level/severity, inspectable below"
-	# Force color: go test pipes the test's stderr, so tint can't detect a TTY.
+	# Force color: go test pipes the test's stderr, so pterm can't detect a TTY.
 	CLICOLOR_FORCE=1 go test -v -run TestPretty ./...
+}
+
+showcase() {
+	echo "==> showcase: every console feature (examples.md), inspectable below"
+	SIGNALS_SHOWCASE=1 CLICOLOR_FORCE=1 go test -v -run TestShowcase ./...
 }
 
 itest() {
@@ -106,13 +112,14 @@ shift || true
 case "$cmd" in
 unit | test) unit "$@" ;;
 pretty) pretty "$@" ;;
+showcase) showcase "$@" ;;
 up) up ;;
 down) down ;;
 itest) itest "$@" ;;
 logs) logs ;;
 ci) ci ;;
 help | -h | --help)
-	sed -n '3,15p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+	sed -n '3,16p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 	;;
 *)
 	echo "error: unknown command '$cmd' (try: bin/test help)" >&2

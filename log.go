@@ -8,8 +8,9 @@ import (
 	"log/slog"
 	"os"
 	"slices"
+	"strings"
 
-	"github.com/lmittmann/tint"
+	"github.com/pterm/pterm"
 	"go.opentelemetry.io/contrib/bridges/otelslog"
 	otlploghttp "go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp"
 	otellog "go.opentelemetry.io/otel/log"
@@ -21,7 +22,7 @@ import (
 // iso8601 is the console timestamp format, matching grackleclub/log's ISO8601.
 const iso8601 = "2006-01-02T15:04:05.000Z"
 
-// Logger builds the fanout slog.Logger: a tint console handler plus, when lp is
+// Logger builds the fanout slog.Logger: a pterm console handler plus, when lp is
 // non-nil, an otelslog handler bridging to lp. It installs no globals and owns
 // no lifecycle; the caller created lp and is responsible for lp.Shutdown. Pass
 // nil for console-only.
@@ -31,7 +32,7 @@ func Logger(cfg Config, lp otellog.LoggerProvider) *slog.Logger {
 	// The console sink is gated by Config.StderrLevel. The OTLP sink is added
 	// without a level on purpose: it ships every severity to SigNoz, which is
 	// the source of truth and the place to filter. See Config.StderrLevel.
-	handlers := []slog.Handler{consoleHandler(os.Stderr, level, addSource)}
+	handlers := []slog.Handler{consoleHandler(os.Stderr, level, addSource, cfg.Console)}
 	if lp != nil {
 		handlers = append(handlers, otelslog.NewHandler(
 			scopeName,
@@ -41,17 +42,144 @@ func Logger(cfg Config, lp otellog.LoggerProvider) *slog.Logger {
 	return slog.New(&fanoutHandler{handlers: handlers})
 }
 
-// consoleHandler is the pretty dev sink: tint, wrapped so a span context in the
-// log's ctx renders a short trace_id inline (the dev half of the correlation
-// contract).
-func consoleHandler(w io.Writer, level slog.Leveler, addSource bool) slog.Handler {
-	h := tint.NewHandler(w, &tint.Options{
-		Level:      level,
-		AddSource:  addSource,
-		TimeFormat: iso8601,
-		NoColor:    noColor(w),
+// consoleHandler is the pretty dev sink: a pterm logger, wrapped so a span
+// context in the log's ctx renders a short trace_id inline (the dev half of the
+// correlation contract). pterm is a global singleton, so configuring color here
+// also styles any pterm tables/spinners a consumer prints directly — the
+// fleet-wide consistency that signals is here to provide.
+func consoleHandler(w io.Writer, level slog.Level, addSource bool, c Console) slog.Handler {
+	if noColor(w) {
+		pterm.DisableColor()
+	}
+	logger := pterm.DefaultLogger.
+		WithWriter(w).
+		WithLevel(ptermLevel(level)).
+		WithTime(!c.NoTime).
+		WithTimeFormat(iso8601).
+		WithCaller(addSource)
+	if addSource {
+		// pterm's slog bridge assumes a direct slog->pterm call (offset 3); the
+		// fanout and trace wrappers add two frames between, so bump the offset
+		// to land on the caller's source rather than our plumbing.
+		logger = logger.WithCallerOffset(callerOffset)
+	}
+	if c.MaxWidth != 0 {
+		logger = logger.WithMaxWidth(c.MaxWidth)
+	}
+	return newTraceHandler(&ptermHandler{logger: logger})
+}
+
+// callerOffset is the stack distance pterm walks from logger.Info up to the
+// caller: ptermHandler.Handle, traceHandler.Handle, fanoutHandler.Handle, and
+// slog's two internal frames.
+const callerOffset = 5
+
+// ptermHandler renders slog records through a pterm.Logger. It replaces
+// pterm.NewSlogHandler, whose bridge drops grouped key prefixes, keeps only the
+// last WithAttrs (so chained .With loses earlier fields), and orders fields off
+// a map. This honors slog's contract instead: attrs accumulate, groups prefix
+// their keys, and field order is preserved. Output is otherwise pterm-native —
+// it calls the same logger.Args/Info path.
+type ptermHandler struct {
+	logger  *pterm.Logger
+	groups  []string
+	preArgs []any // bound attrs, already flattened to prefixed key/value pairs
+}
+
+func (h *ptermHandler) Enabled(_ context.Context, level slog.Level) bool {
+	return h.logger.CanPrint(ptermLevel(level))
+}
+
+func (h *ptermHandler) Handle(_ context.Context, r slog.Record) error {
+	args := slices.Clip(h.preArgs)
+	prefix := h.prefix()
+	r.Attrs(func(a slog.Attr) bool {
+		args = appendArg(args, prefix, a)
+		return true
 	})
-	return newTraceHandler(h)
+	la := h.logger.Args(args...)
+	switch {
+	case r.Level >= slog.LevelError:
+		h.logger.Error(r.Message, la)
+	case r.Level >= slog.LevelWarn:
+		h.logger.Warn(r.Message, la)
+	case r.Level >= slog.LevelInfo:
+		h.logger.Info(r.Message, la)
+	default:
+		h.logger.Debug(r.Message, la)
+	}
+	return nil
+}
+
+func (h *ptermHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	if len(attrs) == 0 {
+		return h
+	}
+	nh := *h
+	nh.preArgs = slices.Clip(h.preArgs)
+	prefix := h.prefix()
+	for _, a := range attrs {
+		nh.preArgs = appendArg(nh.preArgs, prefix, a)
+	}
+	return &nh
+}
+
+func (h *ptermHandler) WithGroup(name string) slog.Handler {
+	if name == "" {
+		return h
+	}
+	nh := *h
+	nh.groups = append(slices.Clip(h.groups), name)
+	return &nh
+}
+
+func (h *ptermHandler) prefix() string {
+	if len(h.groups) == 0 {
+		return ""
+	}
+	return strings.Join(h.groups, ".") + "."
+}
+
+// appendArg flattens an attr onto the key/value slice pterm.Args expects,
+// prefixing the key with the open group path and recursing into groups (an
+// empty-key group inlines its members, matching slog).
+func appendArg(args []any, prefix string, a slog.Attr) []any {
+	a.Value = a.Value.Resolve()
+	if a.Equal(slog.Attr{}) {
+		return args
+	}
+	key := prefix + a.Key
+	if a.Value.Kind() == slog.KindGroup {
+		group := a.Value.Group()
+		if len(group) == 0 {
+			return args
+		}
+		if a.Key != "" {
+			key += "."
+		} else {
+			key = prefix
+		}
+		for _, ga := range group {
+			args = appendArg(args, key, ga)
+		}
+		return args
+	}
+	return append(args, key, a.Value.Any())
+}
+
+// ptermLevel maps an slog threshold onto pterm's coarser level enum, rounding a
+// custom level down to the nearest standard severity.
+func ptermLevel(l slog.Level) pterm.LogLevel {
+	switch {
+	case l <= slog.LevelDebug:
+		return pterm.LogLevelDebug
+	case l < slog.LevelWarn:
+		return pterm.LogLevelInfo
+	case l < slog.LevelError:
+		return pterm.LogLevelWarn
+	default:
+		return pterm.LogLevelError
+	}
 }
 
 // noColor decides colorization: NO_COLOR forces it off; CLICOLOR_FORCE forces

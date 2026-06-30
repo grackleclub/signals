@@ -11,7 +11,7 @@ import (
 )
 
 // TestPretty is the kitchen sink: it emits a record at every level and a wide
-// spread of attribute shapes, inside a span context, so the tint console
+// spread of attribute shapes, inside a span context, so the pterm console
 // output is inspectable when the test runs:
 //
 //	./bin/test pretty      # go test -run TestPretty -v

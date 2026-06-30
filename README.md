@@ -55,12 +55,15 @@ Every field falls back to `OTEL_*` env, then a default.
 | `Token` | bearer auth, merged over `OTEL_EXPORTER_OTLP_HEADERS` | `OTLP_INGEST_TOKEN` |
 | `StderrLevel` | console threshold | INFO |
 | `DisableRuntimeMetrics` | drop Go runtime metrics | false |
+| `Console` | pterm console tuning (time, caller, width) | timestamps on, caller off |
+
+The console is a [pterm](https://github.com/pterm/pterm) logger, so anything in the build that imports `pterm` directly (tables, spinners, boxes) shares signals' styling with no extra wiring. See [examples.md](examples.md).
 
 ## behavior
 
 | topic | behavior |
 | --- | --- |
-| logs | two sinks: tint console (pretty, `StderrLevel`-gated, `NO_COLOR` aware) and OTLP |
+| logs | two sinks: pterm console (pretty, `StderrLevel`-gated, `NO_COLOR` aware) and OTLP |
 | correlation | a log with a span's context carries `trace_id`/`span_id`; console shows a short `trace_id` |
 | levels | console honors `StderrLevel`; OTLP ships every level, filter in SigNoz |
 | graceful off | no endpoint configured: console only, no error |
