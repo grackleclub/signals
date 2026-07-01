@@ -56,17 +56,21 @@ func Logger(cfg Config, lp otellog.LoggerProvider) *slog.Logger {
 // fleet-wide consistency that signals is here to provide.
 func consoleHandler(w io.Writer, level slog.Level, addSource bool, c Console) slog.Handler {
 	tty := isTerminal(w)
+	// A "rich" sink renders ANSI color and multi-line well: an interactive
+	// terminal or the GitHub Actions log viewer. Everything else (journald,
+	// files, other line-oriented capture) gets plain, one-line output.
+	rich := tty || os.Getenv("GITHUB_ACTIONS") == "true"
 	// pterm colorizes through a process-global (gookit) with no per-stream
 	// toggle. NO_COLOR means "nowhere", so disable it globally; but a plain
-	// console (a non-TTY stderr) must not disable color for pterm output a
-	// consumer sends to its own terminal (e.g. tables on stdout), so strip the
-	// color on this stream only rather than reaching for the global.
+	// sink must not disable color for pterm output a consumer sends to its own
+	// terminal (e.g. tables on stdout), so strip the color on this stream only
+	// rather than reaching for the global.
 	switch {
 	case os.Getenv("NO_COLOR") != "":
 		pterm.DisableColor()
 	case os.Getenv("CLICOLOR_FORCE") != "":
 		// force color even to a pipe (e.g. bin/test pretty)
-	case !tty:
+	case !rich:
 		w = &plainWriter{w}
 	}
 	// Caller is not delegated to pterm's WithCaller: pterm walks the stack by a
@@ -78,7 +82,7 @@ func consoleHandler(w io.Writer, level slog.Level, addSource bool, c Console) sl
 		WithLevel(ptermLevel(level)).
 		WithTime(c.Time.show(tty)).
 		WithTimeFormat(timeFormat)
-	expand := c.Layout.expand(tty)
+	expand := c.Layout.expand(rich)
 	if !expand {
 		// One line: a width nothing reaches, so args never break into the tree.
 		logger = logger.WithMaxWidth(noWrap)

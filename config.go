@@ -93,16 +93,16 @@ const (
 	LayoutOneline
 )
 
-// expand reports whether to use the tree layout; tty reports whether the sink is
-// an interactive terminal.
-func (l Layout) expand(tty bool) bool {
+// expand reports whether to use the tree layout; rich reports whether the sink
+// renders multi-line well (a terminal or GitHub Actions).
+func (l Layout) expand(rich bool) bool {
 	switch l {
 	case LayoutTree:
 		return true
 	case LayoutOneline:
 		return false
 	default:
-		return tty || os.Getenv("GITHUB_ACTIONS") == "true"
+		return rich
 	}
 }
 

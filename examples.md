@@ -32,7 +32,7 @@ signals.Setup(ctx, signals.Config{
 })
 ```
 
-`Time` defaults to `TimeAuto`: the timestamp is hidden at an interactive terminal (local) and shown when stderr is captured (CI, a file, journald), tracking the same TTY signal as color. Force it with `TimeOn` / `TimeOff`.
+`Time` defaults to `TimeAuto`: the timestamp is hidden at an interactive terminal (local) and shown when stderr is captured (CI, a file, journald), since a captured log needs its own clock. Force it with `TimeOn` / `TimeOff`.
 
 `Layout` defaults to `LayoutAuto`, which arranges args by where the output lands. On a terminal or in GitHub Actions it uses a tree — each arg on its own line, values aligned in a column, colon tight against each key:
 
@@ -191,6 +191,6 @@ bold.Println("emphasized")
 
 ## notes
 
-- pterm honors `NO_COLOR`; signals also disables color when stderr is not a TTY.
+- Color and layout track the same signal: on a terminal or in GitHub Actions (both render ANSI and multi-line) you get color and the tree; elsewhere (journald, files) output is stripped to plain and one line. `NO_COLOR` forces plain everywhere; `CLICOLOR_FORCE` keeps color even when captured.
 - signals renders the console through its own slog handler rather than pterm's bundled bridge, so attribute order is preserved, open groups prefix their keys (`req.method`), and chained `.With` accumulates. pterm's own `NewSlogHandler` does none of these.
 - Interactive prompts and live printers (spinner, progress bar) assume a TTY. They no-op gracefully into piped or captured output, so guard them behind a TTY check in non-interactive contexts if the plain fallback is noisy.
