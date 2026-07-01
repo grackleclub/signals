@@ -11,4 +11,12 @@
 // Logs emitted with a context inside a span are correlated with their trace by
 // construction. With no OTLP endpoint configured, signals degrades to a
 // console-only logger — no exporters, no error ("graceful off").
+//
+// The console sink is a pterm logger. Because pterm is a process-global
+// singleton, the styling signals sets is shared by any pterm component a
+// consumer prints directly (tables, spinners, boxes), so they match the logs
+// with no wiring — see examples.md. signals renders through its own slog
+// handler rather than pterm's bundled bridge, so attribute order is preserved,
+// open groups prefix their keys, and chained With accumulates. Tune the sink
+// via Config.Console.
 package signals

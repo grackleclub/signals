@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"os"
 	"testing"
 
 	"github.com/grackleclub/signals"
@@ -11,15 +12,20 @@ import (
 )
 
 // TestPretty is the kitchen sink: it emits a record at every level and a wide
-// spread of attribute shapes, inside a span context, so the tint console
+// spread of attribute shapes, inside a span context, so the pterm console
 // output is inspectable when the test runs:
 //
-//	./bin/test pretty      # go test -run TestPretty -v
+//	./bin/test pretty      # local (no time) and CI (time) variants
 //
 // It is not a golden-file assertion — the value is eyeballing the pretty
-// output (color, ISO8601, inline trace_id correlation).
+// output (color, timestamp, inline trace_id correlation). SIGNALS_PRETTY_TIME
+// forces the timestamp on/off (unset = the TimeAuto default); the harness shows
+// both the local and captured looks.
 func TestPretty(t *testing.T) {
-	log := signals.Logger(signals.Config{StderrLevel: slog.LevelDebug}, nil)
+	log := signals.Logger(signals.Config{
+		StderrLevel: slog.LevelDebug,
+		Console:     signals.Console{Time: prettyTime(), Layout: signals.LayoutTree},
+	}, nil)
 	if log == nil {
 		t.Fatal("Logger returned nil")
 	}
@@ -56,4 +62,18 @@ func TestPretty(t *testing.T) {
 
 	// A child logger with bound attributes, no ctx (uncorrelated on purpose).
 	log.With("component", "demo").Warn("uncorrelated: no ctx, no trace_id")
+}
+
+// prettyTime reads SIGNALS_PRETTY_TIME so the harness can force the timestamp
+// on (the captured/CI look) or off (the local look); unset is the TimeAuto
+// default, which under go test's piped stderr resolves to on.
+func prettyTime() signals.TimeMode {
+	switch os.Getenv("SIGNALS_PRETTY_TIME") {
+	case "off":
+		return signals.TimeOff
+	case "on":
+		return signals.TimeOn
+	default:
+		return signals.TimeAuto
+	}
 }

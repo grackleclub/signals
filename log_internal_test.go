@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lmittmann/tint"
+	"github.com/pterm/pterm"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -27,7 +27,7 @@ func spanContext() context.Context {
 // the caller's own attrs remain grouped.
 func TestTraceHandler_TopLevelTraceID(t *testing.T) {
 	var buf bytes.Buffer
-	log := slog.New(newTraceHandler(tint.NewHandler(&buf, &tint.Options{NoColor: true})))
+	log := slog.New(newTraceHandler(slog.NewTextHandler(&buf, nil)))
 
 	log.InfoContext(spanContext(), "plain")
 	if got := buf.String(); !strings.Contains(got, "trace_id=01234567") {
@@ -48,10 +48,32 @@ func TestTraceHandler_TopLevelTraceID(t *testing.T) {
 // TestTraceHandler_NoSpan: without a span context, no trace_id is added.
 func TestTraceHandler_NoSpan(t *testing.T) {
 	var buf bytes.Buffer
-	log := slog.New(newTraceHandler(tint.NewHandler(&buf, &tint.Options{NoColor: true})))
+	log := slog.New(newTraceHandler(slog.NewTextHandler(&buf, nil)))
 
 	log.Info("no ctx")
 	if strings.Contains(buf.String(), "trace_id") {
 		t.Errorf("want no trace_id without a span, got: %q", buf.String())
+	}
+}
+
+// TestPtermHandler_GroupsAndAttrs locks the reason ptermHandler exists over
+// pterm's own bridge: open groups prefix their keys, and chained With accumulates
+// rather than dropping all but the last attr.
+func TestPtermHandler_GroupsAndAttrs(t *testing.T) {
+	pterm.DisableColor()
+	var buf bytes.Buffer
+	lg := pterm.DefaultLogger.WithWriter(&buf).WithLevel(pterm.LogLevelDebug).WithTime(false)
+	log := slog.New(&ptermHandler{logger: lg})
+
+	log.WithGroup("req").Info("grouped", "method", "GET")
+	if got := buf.String(); !strings.Contains(got, "req.method") {
+		t.Errorf("grouped: want req.method prefix, got: %q", got)
+	}
+
+	buf.Reset()
+	log.With("a", 1).With("b", 2).Info("chained")
+	got := buf.String()
+	if !strings.Contains(got, "a:") || !strings.Contains(got, "b:") {
+		t.Errorf("chained: want both a and b, got: %q", got)
 	}
 }
