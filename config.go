@@ -1,6 +1,7 @@
 package signals
 
 import (
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -44,9 +45,37 @@ type Config struct {
 	DisableRuntimeMetrics bool
 
 	// Console tunes the pterm console (stderr) sink. The zero value is the
-	// drop-in default: timestamps on, caller off (unless DEBUG), pterm's own
-	// line wrapping.
+	// drop-in default: timestamps auto (on only when stderr is captured), caller
+	// off (unless DEBUG), pterm's own line wrapping.
 	Console Console
+}
+
+// TimeMode controls the leading console timestamp.
+type TimeMode int
+
+const (
+	// TimeAuto shows the timestamp only when stderr is not an interactive
+	// terminal: hidden in a local TTY, where you have your own clock and
+	// ephemeral scrollback, and shown when the output is captured (CI, a file,
+	// journald), where it needs an embedded time. It tracks the same TTY signal
+	// as color. This is the zero value.
+	TimeAuto TimeMode = iota
+	// TimeOn always prints the timestamp.
+	TimeOn
+	// TimeOff never prints the timestamp.
+	TimeOff
+)
+
+// show resolves the mode against the sink, w, for TimeAuto.
+func (m TimeMode) show(w io.Writer) bool {
+	switch m {
+	case TimeOn:
+		return true
+	case TimeOff:
+		return false
+	default:
+		return !isTerminal(w)
+	}
 }
 
 // Console configures the pterm-backed console sink, the pretty half of the
@@ -56,16 +85,23 @@ type Config struct {
 // spinners, and the rest. That shared state is the point: one consistent look
 // across the fleet with no per-call wiring.
 type Console struct {
-	// NoTime drops the leading ISO8601 timestamp. pterm shows it by default.
-	NoTime bool
+	// Time controls the leading ISO8601 timestamp. The zero value (TimeAuto)
+	// shows it only when stderr is captured rather than a local terminal.
+	Time TimeMode
 
 	// Caller forces source locations on even without DEBUG (which already
-	// turns them on together with debug level). pterm derives the caller by
-	// stack offset rather than from the record, so the location is best-effort
-	// through the fanout wrappers.
+	// turns them on together with debug level). The location is read from the
+	// record's PC (the true call site) and rendered as a trailing "caller" arg.
 	Caller bool
 
-	// MaxWidth wraps a line (message plus its args) at this column. 0 keeps
+	// Compact keeps args on the message line when they fit, falling to the tree
+	// only when the line overflows MaxWidth (pterm's native width behavior). The
+	// zero value is false: every arg gets its own line, so a record reads the
+	// same regardless of terminal width or whether the timestamp is shown.
+	Compact bool
+
+	// MaxWidth wraps a line at this column, but only when Compact is set; the
+	// expanded (default) layout sizes each line to its own message. 0 keeps
 	// pterm's default of 80.
 	MaxWidth int
 }

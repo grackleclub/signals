@@ -77,9 +77,14 @@ unit() {
 }
 
 pretty() {
-	echo "==> pretty (kitchen sink): every level/severity, inspectable below"
+	echo "==> pretty (kitchen sink): local (no time) and CI (time) variants"
 	# Force color: go test pipes the test's stderr, so pterm can't detect a TTY.
-	CLICOLOR_FORCE=1 go test -v -run TestPretty ./...
+	# -count=1 defeats the test cache so each variant actually re-runs and prints.
+	for variant in "local:off" "ci:on"; do
+		echo "----- ${variant%%:*} -----"
+		SIGNALS_PRETTY_TIME="${variant##*:}" CLICOLOR_FORCE=1 \
+			go test -v -count=1 -run TestPretty ./...
+	done
 }
 
 showcase() {

@@ -55,7 +55,7 @@ Every field falls back to `OTEL_*` env, then a default.
 | `Token` | bearer auth, merged over `OTEL_EXPORTER_OTLP_HEADERS` | `OTLP_INGEST_TOKEN` |
 | `StderrLevel` | console threshold | INFO |
 | `DisableRuntimeMetrics` | drop Go runtime metrics | false |
-| `Console` | pterm console tuning (time, caller, width) | timestamps on, caller off |
+| `Console` | pterm console tuning (time, caller, compact, width) | time auto (on when captured), one arg per line |
 
 The console is a [pterm](https://github.com/pterm/pterm) logger, so anything in the build that imports `pterm` directly (tables, spinners, boxes) shares signals' styling with no extra wiring. See [examples.md](examples.md).
 

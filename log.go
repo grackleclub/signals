@@ -7,9 +7,13 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"regexp"
+	"runtime"
 	"slices"
 	"strings"
+	"time"
 
+	"github.com/mattn/go-runewidth"
 	"github.com/pterm/pterm"
 	"go.opentelemetry.io/contrib/bridges/otelslog"
 	otlploghttp "go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp"
@@ -19,8 +23,12 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-// iso8601 is the console timestamp format, matching grackleclub/log's ISO8601.
-const iso8601 = "2006-01-02T15:04:05.000Z"
+// iso8601 is the console timestamp format: local time with no zone designator
+// (valid ISO 8601, though not RFC 3339), since pterm renders time.Now() in
+// local time and a fixed Z would lie about the zone. The console is a dev
+// convenience; OTLP carries the authoritative absolute timestamp, which SigNoz
+// shows in UTC.
+const iso8601 = "2006-01-02T15:04:05.000"
 
 // Logger builds the fanout slog.Logger: a pterm console handler plus, when lp is
 // non-nil, an otelslog handler bridging to lp. It installs no globals and owns
@@ -48,31 +56,65 @@ func Logger(cfg Config, lp otellog.LoggerProvider) *slog.Logger {
 // also styles any pterm tables/spinners a consumer prints directly — the
 // fleet-wide consistency that signals is here to provide.
 func consoleHandler(w io.Writer, level slog.Level, addSource bool, c Console) slog.Handler {
-	if noColor(w) {
+	// pterm colorizes through a process-global (gookit) with no per-stream
+	// toggle. NO_COLOR means "nowhere", so disable it globally; but a plain
+	// console (a non-TTY stderr) must not disable color for pterm output a
+	// consumer sends to its own terminal (e.g. tables on stdout), so strip the
+	// color on this stream only rather than reaching for the global.
+	switch {
+	case os.Getenv("NO_COLOR") != "":
 		pterm.DisableColor()
+	case os.Getenv("CLICOLOR_FORCE") != "":
+		// force color even to a pipe (e.g. bin/test pretty)
+	case !isTerminal(w):
+		w = &plainWriter{w}
 	}
+	// Caller is not delegated to pterm's WithCaller: pterm walks the stack by a
+	// fixed offset, which our fanout/trace wrappers throw off. ptermHandler adds
+	// it from the record PC (the true call site) as a normal arg instead, so it
+	// also aligns with the other args in the tree.
 	logger := pterm.DefaultLogger.
 		WithWriter(w).
 		WithLevel(ptermLevel(level)).
-		WithTime(!c.NoTime).
-		WithTimeFormat(iso8601).
-		WithCaller(addSource)
-	if addSource {
-		// pterm's slog bridge assumes a direct slog->pterm call (offset 3); the
-		// fanout and trace wrappers add two frames between, so bump the offset
-		// to land on the caller's source rather than our plumbing.
-		logger = logger.WithCallerOffset(callerOffset)
-	}
-	if c.MaxWidth != 0 {
+		WithTime(c.Time.show(w)).
+		WithTimeFormat(iso8601)
+	if c.Compact && c.MaxWidth != 0 {
 		logger = logger.WithMaxWidth(c.MaxWidth)
 	}
-	return newTraceHandler(&ptermHandler{logger: logger})
+	h := &ptermHandler{logger: logger, expand: !c.Compact, caller: addSource}
+	if h.expand {
+		h.prefixWidth = prefixWidth(logger)
+	}
+	return newTraceHandler(h)
 }
 
-// callerOffset is the stack distance pterm walks from logger.Info up to the
-// caller: ptermHandler.Handle, traceHandler.Handle, fanoutHandler.Handle, and
-// slog's two internal frames.
-const callerOffset = 5
+// prefixWidth is the display width pterm renders before the message: the 5-wide
+// level tag and its trailing space, plus the fixed-width timestamp and its
+// space when shown. The timestamp width is constant for iso8601, so this is
+// computed once per handler rather than per record.
+func prefixWidth(l *pterm.Logger) int {
+	w := 6 // "%-5s" level tag + trailing space
+	if l.ShowTime {
+		w += runewidth.StringWidth(time.Now().Format(l.TimeFormat)) + 1
+	}
+	return w
+}
+
+// sgr matches ANSI SGR (color/style) escape sequences, the only control codes
+// pterm's logger emits to its writer.
+var sgr = regexp.MustCompile("\x1b\\[[0-9;]*m")
+
+// plainWriter strips SGR sequences from each write so a captured (non-TTY)
+// console stays plain without disabling pterm's global color. pterm writes one
+// full line per record, so a sequence never straddles two writes.
+type plainWriter struct{ w io.Writer }
+
+func (p *plainWriter) Write(b []byte) (int, error) {
+	if _, err := p.w.Write(sgr.ReplaceAll(b, nil)); err != nil {
+		return 0, err
+	}
+	return len(b), nil
+}
 
 // ptermHandler renders slog records through a pterm.Logger. It replaces
 // pterm.NewSlogHandler, whose bridge drops grouped key prefixes, keeps only the
@@ -81,9 +123,12 @@ const callerOffset = 5
 // their keys, and field order is preserved. Output is otherwise pterm-native —
 // it calls the same logger.Args/Info path.
 type ptermHandler struct {
-	logger  *pterm.Logger
-	groups  []string
-	preArgs []any // bound attrs, already flattened to prefixed key/value pairs
+	logger      *pterm.Logger
+	expand      bool // size each line to its message so every arg trees
+	caller      bool // append the record's source location as a "caller" arg
+	prefixWidth int  // rendered width before the message, for expand sizing
+	groups      []string
+	preArgs     []any // bound attrs, already flattened to prefixed key/value pairs
 }
 
 func (h *ptermHandler) Enabled(_ context.Context, level slog.Level) bool {
@@ -97,18 +142,92 @@ func (h *ptermHandler) Handle(_ context.Context, r slog.Record) error {
 		args = appendArg(args, prefix, a)
 		return true
 	})
-	la := h.logger.Args(args...)
+	if h.caller {
+		args = appendCaller(args, r.PC)
+	}
+	logger := h.logger
+	if h.expand {
+		// Size MaxWidth to exactly the prefix plus message: the message still
+		// fits (no message wrap) while any arg overflows, so every arg drops to
+		// pterm's tree. See renderColorful's two width checks.
+		args = alignArgs(args)
+		logger = logger.WithMaxWidth(h.prefixWidth + msgWidth(r.Message))
+	}
+	la := logger.Args(args...)
 	switch {
 	case r.Level >= slog.LevelError:
-		h.logger.Error(r.Message, la)
+		logger.Error(r.Message, la)
 	case r.Level >= slog.LevelWarn:
-		h.logger.Warn(r.Message, la)
+		logger.Warn(r.Message, la)
 	case r.Level >= slog.LevelInfo:
-		h.logger.Info(r.Message, la)
+		logger.Info(r.Message, la)
 	default:
-		h.logger.Debug(r.Message, la)
+		logger.Debug(r.Message, la)
 	}
 	return nil
+}
+
+// alignArgs left-pads each value so the values line up in a column while each
+// colon stays tight against its key. Keys are untouched, so pterm's KeyStyles
+// (err/error/caller) still apply. It returns args unchanged when there is
+// nothing to align (fewer than two keys, or all keys the same width), so the
+// common path allocates nothing.
+func alignArgs(args []any) []any {
+	widest, narrowest := 0, -1
+	for i := 0; i+1 < len(args); i += 2 {
+		k, ok := args[i].(string)
+		if !ok {
+			continue
+		}
+		w := runewidth.StringWidth(k)
+		if w > widest {
+			widest = w
+		}
+		if narrowest < 0 || w < narrowest {
+			narrowest = w
+		}
+	}
+	if narrowest < 0 || widest == narrowest {
+		return args
+	}
+	out := slices.Clone(args)
+	for i := 0; i+1 < len(out); i += 2 {
+		k, ok := out[i].(string)
+		if !ok {
+			continue
+		}
+		if pad := widest - runewidth.StringWidth(k); pad > 0 {
+			out[i+1] = strings.Repeat(" ", pad) + pterm.Sprint(out[i+1])
+		}
+	}
+	return out
+}
+
+// appendCaller adds the record's source location as a trailing "caller" arg,
+// styled to match pterm's own caller line (gray value, gray-bold key via the
+// default KeyStyles). It reads the location from the record PC — the true call
+// site — rather than pterm's stack-offset guess, and being a normal arg it
+// aligns with the rest in the tree.
+func appendCaller(args []any, pc uintptr) []any {
+	if pc == 0 {
+		return args
+	}
+	f, _ := runtime.CallersFrames([]uintptr{pc}).Next()
+	if f.File == "" {
+		return args
+	}
+	return append(args, "caller", pterm.FgGray.Sprint(fmt.Sprintf("%s:%d", f.File, f.Line)))
+}
+
+// msgWidth is the display width of the widest line in msg.
+func msgWidth(msg string) int {
+	width := 0
+	for _, line := range strings.Split(msg, "\n") {
+		if w := runewidth.StringWidth(line); w > width {
+			width = w
+		}
+	}
+	return width
 }
 
 func (h *ptermHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
@@ -180,19 +299,6 @@ func ptermLevel(l slog.Level) pterm.LogLevel {
 	default:
 		return pterm.LogLevelError
 	}
-}
-
-// noColor decides colorization: NO_COLOR forces it off; CLICOLOR_FORCE forces
-// it on (e.g. `bin/test pretty`, where go test pipes stderr so it isn't a TTY);
-// otherwise color only a real terminal.
-func noColor(w io.Writer) bool {
-	if os.Getenv("NO_COLOR") != "" {
-		return true
-	}
-	if os.Getenv("CLICOLOR_FORCE") != "" {
-		return false
-	}
-	return !isTerminal(w)
 }
 
 // isTerminal reports whether w is a character device (a TTY), so color is only

@@ -28,9 +28,21 @@ Console tuning lives on `Config.Console`:
 
 ```go
 signals.Setup(ctx, signals.Config{
-	Console: signals.Console{NoTime: true, MaxWidth: 120},
+	Console: signals.Console{Time: signals.TimeOff, Compact: true},
 })
 ```
+
+`Time` defaults to `TimeAuto`: the timestamp is hidden at an interactive terminal (local) and shown when stderr is captured (CI, a file, journald), tracking the same TTY signal as color. Force it with `TimeOn` / `TimeOff`.
+
+By default every arg gets its own line under the message (a tree) with the values aligned in a column (the colon stays tight against each key), so a record reads the same at any width:
+
+```
+INFO  listening
+    ├ addr: :8080
+    └ tls:  true
+```
+
+Set `Compact: true` to keep args on the message line when they fit, falling to the tree (governed by `MaxWidth`, default 80) only when the line overflows.
 
 ## 2. message lines
 
