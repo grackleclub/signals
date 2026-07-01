@@ -85,7 +85,7 @@ func (m TimeMode) show(w io.Writer) bool {
 // spinners, and the rest. That shared state is the point: one consistent look
 // across the fleet with no per-call wiring.
 type Console struct {
-	// Time controls the leading ISO8601 timestamp. The zero value (TimeAuto)
+	// Time controls the leading wall-clock timestamp. The zero value (TimeAuto)
 	// shows it only when stderr is captured rather than a local terminal.
 	Time TimeMode
 

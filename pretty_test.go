@@ -18,7 +18,7 @@ import (
 //	./bin/test pretty      # local (no time) and CI (time) variants
 //
 // It is not a golden-file assertion — the value is eyeballing the pretty
-// output (color, ISO8601, inline trace_id correlation). SIGNALS_PRETTY_TIME
+// output (color, timestamp, inline trace_id correlation). SIGNALS_PRETTY_TIME
 // forces the timestamp on/off (unset = the TimeAuto default); the harness shows
 // both the local and captured looks.
 func TestPretty(t *testing.T) {

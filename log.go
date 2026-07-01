@@ -23,12 +23,11 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-// iso8601 is the console timestamp format: local time with no zone designator
-// (valid ISO 8601, though not RFC 3339), since pterm renders time.Now() in
-// local time and a fixed Z would lie about the zone. The console is a dev
-// convenience; OTLP carries the authoritative absolute timestamp, which SigNoz
-// shows in UTC.
-const iso8601 = "2006-01-02T15:04:05.000"
+// timeFormat is the console timestamp: local wall-clock to the millisecond, no
+// date and no zone. The console is a live dev convenience, so the date is
+// noise; OTLP carries the authoritative absolute timestamp, which SigNoz shows
+// in UTC. It renders time.Now() (local), so a zone marker would only lie.
+const timeFormat = "15:04:05.000"
 
 // Logger builds the fanout slog.Logger: a pterm console handler plus, when lp is
 // non-nil, an otelslog handler bridging to lp. It installs no globals and owns
@@ -77,7 +76,7 @@ func consoleHandler(w io.Writer, level slog.Level, addSource bool, c Console) sl
 		WithWriter(w).
 		WithLevel(ptermLevel(level)).
 		WithTime(c.Time.show(w)).
-		WithTimeFormat(iso8601)
+		WithTimeFormat(timeFormat)
 	if c.Compact && c.MaxWidth != 0 {
 		logger = logger.WithMaxWidth(c.MaxWidth)
 	}
@@ -90,7 +89,7 @@ func consoleHandler(w io.Writer, level slog.Level, addSource bool, c Console) sl
 
 // prefixWidth is the display width pterm renders before the message: the 5-wide
 // level tag and its trailing space, plus the fixed-width timestamp and its
-// space when shown. The timestamp width is constant for iso8601, so this is
+// space when shown. The timestamp width is constant for timeFormat, so this is
 // computed once per handler rather than per record.
 func prefixWidth(l *pterm.Logger) int {
 	w := 6 // "%-5s" level tag + trailing space
