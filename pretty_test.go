@@ -24,7 +24,7 @@ import (
 func TestPretty(t *testing.T) {
 	log := signals.Logger(signals.Config{
 		StderrLevel: slog.LevelDebug,
-		Console:     signals.Console{Time: prettyTime()},
+		Console:     signals.Console{Time: prettyTime(), Layout: signals.LayoutTree},
 	}, nil)
 	if log == nil {
 		t.Fatal("Logger returned nil")

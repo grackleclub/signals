@@ -1,7 +1,6 @@
 package signals
 
 import (
-	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -66,15 +65,44 @@ const (
 	TimeOff
 )
 
-// show resolves the mode against the sink, w, for TimeAuto.
-func (m TimeMode) show(w io.Writer) bool {
+// show resolves whether to print the timestamp; tty reports whether the sink is
+// an interactive terminal.
+func (m TimeMode) show(tty bool) bool {
 	switch m {
 	case TimeOn:
 		return true
 	case TimeOff:
 		return false
 	default:
-		return !isTerminal(w)
+		return !tty
+	}
+}
+
+// Layout controls how a record's args are arranged on the console.
+type Layout int
+
+const (
+	// LayoutAuto trees the args (one per line, values aligned) on a terminal or
+	// in GitHub Actions, where multi-line reads well, and keeps the whole record
+	// on one line otherwise — journald, files, and other line-oriented capture,
+	// where each newline becomes a separate entry. This is the zero value.
+	LayoutAuto Layout = iota
+	// LayoutTree always puts each arg on its own line.
+	LayoutTree
+	// LayoutOneline always keeps the whole record on one line.
+	LayoutOneline
+)
+
+// expand reports whether to use the tree layout; tty reports whether the sink is
+// an interactive terminal.
+func (l Layout) expand(tty bool) bool {
+	switch l {
+	case LayoutTree:
+		return true
+	case LayoutOneline:
+		return false
+	default:
+		return tty || os.Getenv("GITHUB_ACTIONS") == "true"
 	}
 }
 
@@ -94,16 +122,12 @@ type Console struct {
 	// record's PC (the true call site) and rendered as a trailing "caller" arg.
 	Caller bool
 
-	// Compact keeps args on the message line when they fit, falling to the tree
-	// only when the line overflows MaxWidth (pterm's native width behavior). The
-	// zero value is false: every arg gets its own line, so a record reads the
-	// same regardless of terminal width or whether the timestamp is shown.
-	Compact bool
-
-	// MaxWidth wraps a line at this column, but only when Compact is set; the
-	// expanded (default) layout sizes each line to its own message. 0 keeps
-	// pterm's default of 80.
-	MaxWidth int
+	// Layout arranges a record's args as a tree (one per line, values aligned)
+	// or on one line. The zero value (LayoutAuto) chooses per environment: a
+	// tree on a terminal or in GitHub Actions, one line for other captured
+	// output such as journald, where a multi-line record fragments into
+	// separate entries.
+	Layout Layout
 }
 
 // resolved fills empty fields from the standard OTEL_* env vars and defaults.

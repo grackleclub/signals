@@ -55,6 +55,7 @@ func Logger(cfg Config, lp otellog.LoggerProvider) *slog.Logger {
 // also styles any pterm tables/spinners a consumer prints directly — the
 // fleet-wide consistency that signals is here to provide.
 func consoleHandler(w io.Writer, level slog.Level, addSource bool, c Console) slog.Handler {
+	tty := isTerminal(w)
 	// pterm colorizes through a process-global (gookit) with no per-stream
 	// toggle. NO_COLOR means "nowhere", so disable it globally; but a plain
 	// console (a non-TTY stderr) must not disable color for pterm output a
@@ -65,7 +66,7 @@ func consoleHandler(w io.Writer, level slog.Level, addSource bool, c Console) sl
 		pterm.DisableColor()
 	case os.Getenv("CLICOLOR_FORCE") != "":
 		// force color even to a pipe (e.g. bin/test pretty)
-	case !isTerminal(w):
+	case !tty:
 		w = &plainWriter{w}
 	}
 	// Caller is not delegated to pterm's WithCaller: pterm walks the stack by a
@@ -75,17 +76,23 @@ func consoleHandler(w io.Writer, level slog.Level, addSource bool, c Console) sl
 	logger := pterm.DefaultLogger.
 		WithWriter(w).
 		WithLevel(ptermLevel(level)).
-		WithTime(c.Time.show(w)).
+		WithTime(c.Time.show(tty)).
 		WithTimeFormat(timeFormat)
-	if c.Compact && c.MaxWidth != 0 {
-		logger = logger.WithMaxWidth(c.MaxWidth)
+	expand := c.Layout.expand(tty)
+	if !expand {
+		// One line: a width nothing reaches, so args never break into the tree.
+		logger = logger.WithMaxWidth(noWrap)
 	}
-	h := &ptermHandler{logger: logger, expand: !c.Compact, caller: addSource}
-	if h.expand {
+	h := &ptermHandler{logger: logger, expand: expand, caller: addSource}
+	if expand {
 		h.prefixWidth = prefixWidth(logger)
 	}
 	return newTraceHandler(h)
 }
+
+// noWrap is a MaxWidth no rendered line reaches, so the one-line layout keeps
+// every arg inline instead of overflowing into the tree.
+const noWrap = 1 << 30
 
 // prefixWidth is the display width pterm renders before the message: the 5-wide
 // level tag and its trailing space, plus the fixed-width timestamp and its
